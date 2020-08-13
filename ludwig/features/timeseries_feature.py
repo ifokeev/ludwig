@@ -201,7 +201,7 @@ class TimeseriesBaseFeature(BaseFeature):
             preprocessing_parameters={},
             global_preprocessing_parameters={}
     ):
-        timeseries_data, drop_first_n = TimeseriesBaseFeature.feature_data(
+        timeseries_data = TimeseriesBaseFeature.feature_data(
             dataset_df[feature['name']].astype(str),
             metadata[feature['name']],
             preprocessing_parameters,
