@@ -28,7 +28,7 @@ from ludwig.data.concatenate_datasets import concatenate_csv
 from ludwig.data.concatenate_datasets import concatenate_df
 from ludwig.data.dataset import Dataset
 from ludwig.features.feature_registries import base_type_registry
-from ludwig.globals import MODEL_HYPERPARAMETERS_FILE_NAME
+from ludwig.globals import MODEL_HYPERPARAMETERS_FILE_NAME, is_on_master
 from ludwig.utils import data_utils
 from ludwig.utils.data_utils import collapse_rare_labels, csv_contains_column
 from ludwig.utils.data_utils import file_exists_with_diff_extension
@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 
 DATA_TRAIN_HDF5_FP = 'data_train_hdf5_fp'
 
+
 def build_dataset(
         dataset_csv,
         features,
@@ -58,7 +59,8 @@ def build_dataset(
 ):
     dataset_df = read_csv(dataset_csv)
     dataset_df.csv = dataset_csv
-    return build_dataset_df(
+
+    data, _, train_set_metadata = build_dataset_df(
         dataset_df,
         features,
         global_preprocessing_parameters,
@@ -66,6 +68,8 @@ def build_dataset(
         random_seed,
         **kwargs
     )
+
+    return data, train_set_metadata
 
 
 def build_dataset_df(
@@ -105,24 +109,24 @@ def build_dataset_df(
         random_seed=random_seed
     )
 
-    return data_val, train_set_metadata
+    return data_val, dataset_df, train_set_metadata
 
 
 def build_metadata(dataset_df, features, global_preprocessing_parameters):
     train_set_metadata = {}
     for feature in features:
         get_feature_meta = get_from_registry(
-            feature['type'],
+            feature[TYPE],
             base_type_registry
         ).get_feature_meta
         if 'preprocessing' in feature:
             preprocessing_parameters = merge_dict(
-                global_preprocessing_parameters[feature['type']],
+                global_preprocessing_parameters[feature[TYPE]],
                 feature['preprocessing']
             )
         else:
             preprocessing_parameters = global_preprocessing_parameters[
-                feature['type']
+                feature[TYPE]
             ]
         handle_missing_values(
             dataset_df,
@@ -135,7 +139,6 @@ def build_metadata(dataset_df, features, global_preprocessing_parameters):
         )
     return train_set_metadata
 
-
 def build_data(
         dataset_df,
         features,
@@ -143,92 +146,52 @@ def build_data(
         global_preprocessing_parameters
 ):
     data_dict = {}
-
     for feature in features:
         add_feature_data = get_from_registry(
-            feature['type'],
+            feature[TYPE],
             base_type_registry
         ).add_feature_data
         if 'preprocessing' in feature:
             preprocessing_parameters = merge_dict(
-                global_preprocessing_parameters[feature['type']],
+                global_preprocessing_parameters[feature[TYPE]],
                 feature['preprocessing']
             )
         else:
             preprocessing_parameters = global_preprocessing_parameters[
-                feature['type']
+                feature[TYPE]
             ]
-
-        handle_missing_values(dataset_df, feature, preprocessing_parameters)
-
+        handle_missing_values(
+            dataset_df,
+            feature,
+            preprocessing_parameters
+        )
         if feature['name'] not in train_set_metadata:
             train_set_metadata[feature['name']] = {}
-
-        train_set_metadata[feature['name']]['preprocessing'] = preprocessing_parameters
-
+        train_set_metadata[
+            feature['name']
+        ]['preprocessing'] = preprocessing_parameters
         add_feature_data(
             feature,
             dataset_df,
             data_dict,
             train_set_metadata,
-            preprocessing_parameters
+            preprocessing_parameters,
+            global_preprocessing_parameters
         )
 
-    # drop None values after feature preprocessing
-    subset = slice_data_dict(data_dict, len(dataset_df), train_set_metadata)
+    offset = global_preprocessing_parameters.get('offset', 0)
+    limit = global_preprocessing_parameters.get('limit', len(dataset_df))
 
-    if subset:
-        dataset_df = dataset_df[subset['from']:subset['to']]
-
-    return data_dict, dataset_df
-
-# a bit hacky way because of compatibility
-def slice_data_dict(data_dict, data_len, train_set_metadata):
-    drop_n_first_rows = 0
-    drop_n_last_rows = 0
-
-    for (feature_name, feature_metadata) in train_set_metadata.items():
-        if not isinstance(feature_metadata, dict):
-            continue
-
-        preprocessing = feature_metadata.get('preprocessing', {})
-        missing_value_strategy = preprocessing.get('missing_value_strategy')
-
-        if missing_value_strategy == DROP_ROW:
-            feature_drop_n_first_rows = preprocessing.get('drop_n_first_rows', 0)
-            feature_drop_n_last_rows = preprocessing.get('drop_n_last_rows', 0)
-
-            # removing the maximum described rows
-            if feature_drop_n_first_rows > drop_n_first_rows:
-                drop_n_first_rows = feature_drop_n_first_rows
-
-            if feature_drop_n_last_rows > drop_n_last_rows:
-                drop_n_last_rows = feature_drop_n_last_rows
-    
-    original_subset = {
-        'from': 0,
-        'to': data_len
-    }
-
-    new_subset = dict(original_subset)
-
-    if drop_n_first_rows:
-        new_subset['from'] = drop_n_first_rows
-
-    if drop_n_last_rows:
-        new_subset['to'] = data_len - drop_n_last_rows 
-
-    # do nothing
-    if new_subset.items() == original_subset.items():
-        return None
-
-    logger.info('Slicing subset from:to [%s:%s]...' % (new_subset['from'], new_subset['to']))
+    logger.info('Dataset offset: %s; limit: %s' % (offset, limit))
 
     # slice the subset of rows from the dict keys
     for (k, v) in data_dict.items():
-        data_dict[k] = v[new_subset['from']:new_subset['to']]
+        data_dict[k] = data_utils.sampling(v, offset, limit)
 
-    return new_subset
+    dataset_df = dataset_df.iloc[offset:limit + offset]
+
+    return data_dict, dataset_df
+
 
 def handle_missing_values(dataset_df, feature, preprocessing_parameters):
     missing_value_strategy = preprocessing_parameters['missing_value_strategy']
@@ -242,7 +205,7 @@ def handle_missing_values(dataset_df, feature, preprocessing_parameters):
             dataset_df[feature['name']].value_counts().index[0],
         )
     elif missing_value_strategy == FILL_WITH_MEAN:
-        if feature['type'] != NUMERICAL:
+        if feature[TYPE] != NUMERICAL:
             raise ValueError(
                 'Filling missing values with mean is supported '
                 'only for numerical types',
@@ -257,7 +220,7 @@ def handle_missing_values(dataset_df, feature, preprocessing_parameters):
     elif missing_value_strategy == DROP_ROW:
         dataset_df.dropna(subset=[feature['name']], inplace=True)
     else:
-        raise ValueError('Invalid missing value strategy: %s' % missing_value_strategy)
+        raise ValueError('Invalid missing value strategy')
 
 
 def get_split(
@@ -304,7 +267,7 @@ def load_data(
     hdf5_data = h5py.File(hdf5_file_path, 'r')
     dataset = {}
     for input_feature in input_features:
-        if input_feature['type'] == TEXT:
+        if input_feature[TYPE] == TEXT:
             text_data_field = text_feature_data_field(input_feature)
             dataset[text_data_field] = hdf5_data[text_data_field][()]
         else:
@@ -312,7 +275,7 @@ def load_data(
                 input_feature['name']
             ][()]
     for output_feature in output_features:
-        if output_feature['type'] == TEXT:
+        if output_feature[TYPE] == TEXT:
             dataset[text_feature_data_field(output_feature)] = hdf5_data[
                 text_feature_data_field(output_feature)
             ][()]
@@ -672,7 +635,7 @@ def _preprocess_csv_for_training(
             train_set_metadata=train_set_metadata,
             random_seed=random_seed
         )
-        if not skip_save_processed_input:
+        if is_on_master() and not skip_save_processed_input:
             logger.info('Writing dataset')
             data_hdf5_fp = replace_file_extension(data_csv, 'hdf5')
             data_utils.save_hdf5(data_hdf5_fp, data, train_set_metadata)
@@ -706,7 +669,8 @@ def _preprocess_csv_for_training(
             data_test_csv
         )
         concatenated_df.csv = data_train_csv
-        data, train_set_metadata = build_dataset_df(
+
+        data, _, train_set_metadata = build_dataset_df(
             concatenated_df,
             features,
             preprocessing_params,
@@ -717,7 +681,7 @@ def _preprocess_csv_for_training(
             data,
             data[SPLIT]
         )
-        if not skip_save_processed_input:
+        if is_on_master() and not skip_save_processed_input:
             logger.info('Writing dataset')
             data_train_hdf5_fp = replace_file_extension(data_train_csv, 'hdf5')
             data_utils.save_hdf5(
@@ -792,7 +756,7 @@ def _preprocess_df_for_training(
             data_test_df
         )
 
-    data, train_set_metadata = build_dataset_df(
+    data, _, train_set_metadata = build_dataset_df(
         data_df,
         features,
         preprocessing_params,
@@ -938,7 +902,7 @@ def preprocess_for_prediction(
 
 def replace_text_feature_level(features, datasets):
     for feature in features:
-        if feature['type'] == TEXT:
+        if feature[TYPE] == TEXT:
             for dataset in datasets:
                 if dataset is not None:
                     dataset[feature['name']] = dataset[
@@ -973,15 +937,15 @@ def get_preprocessing_params(model_definition):
     for feature in features:
         if 'preprocessing' in feature:
             local_preprocessing_parameters = merge_dict(
-                global_preprocessing_parameters[feature['type']],
+                global_preprocessing_parameters[feature[TYPE]],
                 feature['preprocessing']
             )
         else:
             local_preprocessing_parameters = global_preprocessing_parameters[
-                feature['type']
+                feature[TYPE]
             ]
         merged_preprocessing_params.append(
-            (feature['name'], feature['type'], local_preprocessing_parameters)
+            (feature['name'], feature[TYPE], local_preprocessing_parameters)
         )
 
     return merged_preprocessing_params

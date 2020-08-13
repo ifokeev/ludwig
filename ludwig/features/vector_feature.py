@@ -62,7 +62,8 @@ class VectorBaseFeature(BaseFeature):
             dataset_df,
             data,
             metadata,
-            preprocessing_parameters
+            preprocessing_parameters={},
+            global_preprocessing_parameters={}
     ):
         """
         Expects all the vectors to be of the same size. The vectors need to be

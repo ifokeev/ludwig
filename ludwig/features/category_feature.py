@@ -89,7 +89,8 @@ class CategoryBaseFeature(BaseFeature):
             dataset_df,
             data,
             metadata,
-            preprocessing_parameters=None
+            preprocessing_parameters={},
+            global_preprocessing_parameters={}
     ):
         data[feature['name']] = CategoryBaseFeature.feature_data(
             dataset_df[feature['name']].astype(str),

@@ -467,3 +467,6 @@ def get_path_size(
                     total_size += os.path.getsize(filepath)
 
     return total_size
+
+def sampling(selection, offset=0, limit=None):
+    return selection[offset:(limit + offset if limit is not None else None)]

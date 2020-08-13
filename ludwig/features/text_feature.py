@@ -172,7 +172,8 @@ class TextBaseFeature(BaseFeature):
             dataset_df,
             data,
             metadata,
-            preprocessing_parameters
+            preprocessing_parameters={},
+            global_preprocessing_parameters={}
     ):
         chars_data, words_data = TextBaseFeature.feature_data(
             dataset_df[feature['name']].astype(str),

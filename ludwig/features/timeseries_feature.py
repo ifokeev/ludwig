@@ -164,8 +164,8 @@ class TimeseriesBaseFeature(BaseFeature):
         return timeseries_matrix
 
     @staticmethod
-    def feature_data(column, metadata, preprocessing_parameters):
-        drop_first_n = 0
+    def feature_data(column, metadata, preprocessing_parameters, global_preprocessing_parameters):
+        offset = 0
         max_timeseries_length = metadata.get('max_timeseries_length', 1)
 
         if preprocessing_parameters.get('matrix_profile'):
@@ -174,7 +174,7 @@ class TimeseriesBaseFeature(BaseFeature):
             if seq_length:
                 column = add_timeseries_matrix_profile(column, seq_length)
                 # rows from range(0, seq_length - 1) indexes are None
-                drop_first_n = seq_length - 1
+                offset = seq_length - 1
 
                 if max_timeseries_length < seq_length:
                     max_timeseries_length = seq_length
@@ -182,14 +182,15 @@ class TimeseriesBaseFeature(BaseFeature):
         timeseries_data = TimeseriesBaseFeature.build_matrix(
             column,
             preprocessing_parameters['tokenizer'],
-            max_timeseries_length,
+            metadata['max_timeseries_length'],
             preprocessing_parameters['padding_value'],
             preprocessing_parameters['padding']
         )
 
         metadata['max_timeseries_length'] = max_timeseries_length
+        global_preprocessing_parameters['offset'] = offset
 
-        return timeseries_data, drop_first_n
+        return timeseries_data
 
     @staticmethod
     def add_feature_data(
@@ -197,15 +198,15 @@ class TimeseriesBaseFeature(BaseFeature):
             dataset_df,
             data,
             metadata,
-            preprocessing_parameters
+            preprocessing_parameters={},
+            global_preprocessing_parameters={}
     ):
         timeseries_data, drop_first_n = TimeseriesBaseFeature.feature_data(
             dataset_df[feature['name']].astype(str),
             metadata[feature['name']],
-            preprocessing_parameters
+            preprocessing_parameters,
+            global_preprocessing_parameters
         )
-
-        preprocessing_parameters['drop_n_first_rows'] = drop_first_n
         data[feature['name']] = timeseries_data
 
 

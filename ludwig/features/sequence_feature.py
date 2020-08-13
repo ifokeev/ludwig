@@ -116,7 +116,8 @@ class SequenceBaseFeature(BaseFeature):
             dataset_df,
             data,
             metadata,
-            preprocessing_parameters
+            preprocessing_parameters={},
+            global_preprocessing_parameters={}
     ):
         sequence_data = SequenceInputFeature.feature_data(
             dataset_df[feature['name']].astype(str),

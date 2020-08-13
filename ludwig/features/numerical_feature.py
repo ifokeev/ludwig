@@ -80,7 +80,8 @@ class NumericalBaseFeature(BaseFeature):
             dataset_df,
             data,
             metadata,
-            preprocessing_parameters,
+            preprocessing_parameters={},
+            global_preprocessing_parameters={}
     ):
         data[feature['name']] = dataset_df[feature['name']].astype(
             np.float32).values

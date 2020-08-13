@@ -68,7 +68,8 @@ class H3BaseFeature(BaseFeature):
             dataset_df,
             data,
             metadata,
-            preprocessing_parameters=None
+            preprocessing_parameters={},
+            global_preprocessing_parameters={}
     ):
         column = dataset_df[feature['name']]
         if column.dtype == object:

@@ -224,7 +224,8 @@ class AudioBaseFeature(BaseFeature):
             dataset_df,
             data,
             metadata,
-            preprocessing_parameters
+            preprocessing_parameters={},
+            global_preprocessing_parameters={}
     ):
         set_default_value(
             feature['preprocessing'],
